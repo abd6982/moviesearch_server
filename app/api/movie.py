@@ -1,9 +1,6 @@
 from flask import Blueprint, request, g
 import requests
 import json
-import os
-import random
-import string
 
 movie_api = Blueprint('movie_api', __name__)
 
@@ -39,26 +36,32 @@ def get():
     if 'id' not in data or 'title' not in data or 'year' not in data:
         return json.dumps({'result': 'Insufficient data supplied.'}), 400
 
-    omdb_params = {
-        'i': data['id'],
-        'apikey': g.OMDB_API_KEY
-    }
+    result = g.redis.get(data['id'])
+    if result is not None:
+        return json.dumps({'result': 'ok', 'data': json.loads(result)}), 200
+    else:
+        omdb_params = {
+            'i': data['id'],
+            'apikey': g.OMDB_API_KEY
+        }
 
-    youtube_params = {
-        'part': 'snippet',
-        'maxResults': '5',
-        'type': 'video',
-        'q': data['title'] + ' ' + data['year'] + ' trailer',
-        'key': g.YOUTUBE_V3_API_KEY
-    }
-    try:
-        imdb_res = requests.get('http://www.omdbapi.com', params=omdb_params)
-        movie_info = json.loads(imdb_res.text)
-        youtube_res = requests.get('https://www.googleapis.com/youtube/v3/search', params=youtube_params)
-        if movie_info['Response'] == 'True':
-            return json.dumps({'result': 'ok', 'data': movie_info, 'videos': json.loads(youtube_res.text)}), 200
-        else:
-            return json.dumps({'result': movie_info['Error']}), 200
+        youtube_params = {
+            'part': 'snippet',
+            'maxResults': '3',
+            'type': 'video',
+            'q': data['title'] + ' ' + data['year'] + ' trailer',
+            'key': g.YOUTUBE_V3_API_KEY
+        }
+        try:
+            imdb_res = requests.get('http://www.omdbapi.com', params=omdb_params)
+            movie_info = json.loads(imdb_res.text)
+            youtube_res = requests.get('https://www.googleapis.com/youtube/v3/search', params=youtube_params)
+            if movie_info['Response'] == 'True':
+                result = {'info': movie_info, 'videos': json.loads(youtube_res.text)}
+                g.redis.set(data['id'], json.dumps(result), ex=g.REDIS_CACHE_TIMEOUT)
+                return json.dumps({'result': 'ok', 'data': result}), 200
+            else:
+                return json.dumps({'result': movie_info['Error']}), 200
 
-    except Exception as e:
-        return json.dumps({'result': "server_error", "error": str(e)}), 500
+        except Exception as e:
+            return json.dumps({'result': "server_error", "error": str(e)}), 500
